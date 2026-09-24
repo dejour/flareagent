@@ -1,0 +1,9 @@
+FROM docker.io/cloudflare/sandbox:0.12.9
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends git ripgrep python3 procps ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g @openai/codex@0.155.1
+RUN mkdir -p /workspace /home/node && chown -R 1000:1000 /workspace /home/node
+COPY bridge.mjs /opt/cloudagent/bridge.mjs
+COPY session_archive.py /opt/cloudagent/session_archive.py
+EXPOSE 8081

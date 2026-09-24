@@ -1,0 +1,23 @@
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Configure local build
+        run: |
+          cp wrangler.example.json wrangler.json
+          cp runtime/wrangler.example.json runtime/wrangler.json
+      - run: npm run typecheck
+      - run: npm run test:auth
+      - run: npm run test:crypto
+      - run: npm run test:github
+      - run: npm run build

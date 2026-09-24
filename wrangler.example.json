@@ -1,0 +1,39 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "flareagent",
+  "main": "vinext/server/fetch-handler",
+  "compatibility_date": "2026-05-15",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "ACCESS_TEAM_DOMAIN": "YOUR_TEAM.cloudflareaccess.com",
+    "ACCESS_AUD": "YOUR_ACCESS_APP_AUD"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "flareagent-db",
+      "database_id": "YOUR_D1_DATABASE_ID",
+      "migrations_dir": "drizzle"
+    }
+  ],
+  "account_id": "YOUR_CLOUDFLARE_ACCOUNT_ID",
+  "services": [
+    {
+      "binding": "RUNTIME",
+      "service": "flareagent-runtime"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "STORAGE",
+      "bucket_name": "flareagent-storage"
+    }
+  ]
+}

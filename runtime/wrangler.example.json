@@ -1,0 +1,75 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "flareagent-runtime",
+  "main": "entry.ts",
+  "account_id": "YOUR_CLOUDFLARE_ACCOUNT_ID",
+  "compatibility_date": "2026-09-19",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ACCOUNTS",
+        "class_name": "AccountAgent"
+      },
+      {
+        "name": "SESSIONS",
+        "class_name": "SessionAgent"
+      },
+      {
+        "name": "SANDBOXES",
+        "class_name": "Sandbox"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "AccountAgent",
+        "SessionAgent",
+        "Sandbox"
+      ]
+    }
+  ],
+  "containers": [
+    {
+      "class_name": "Sandbox",
+      "image": "./container/Dockerfile.sandbox",
+      "constraints": {
+        "regions": [
+          "WNAM",
+          "ENAM"
+        ]
+      },
+      "instance_type": "basic",
+      "max_instances": 8
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "flareagent-db",
+      "database_id": "YOUR_D1_DATABASE_ID",
+      "migrations_dir": "../drizzle"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "STORAGE",
+      "bucket_name": "flareagent-storage"
+    }
+  ],
+  "vars": {
+    "GITHUB_CLIENT_ID": "YOUR_GITHUB_APP_CLIENT_ID",
+    "GITHUB_APP_SLUG": "YOUR_GITHUB_APP_SLUG",
+    "PUBLIC_ORIGIN": "https://flareagent.YOUR_SUBDOMAIN.workers.dev",
+    "CLOUDFLARE_ACCOUNT_ID": "YOUR_CLOUDFLARE_ACCOUNT_ID"
+  }
+}
