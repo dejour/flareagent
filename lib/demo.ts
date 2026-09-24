@@ -71,5 +71,3 @@ export function demoEvents(task: Task): TaskEvent[] {
     },
   ];
 }
-export const demoArtifact =
-  '# 云 Agent 架构摘要\n\n> 界面示例文件，未由本次在线执行生成。\n\n## 控制层\nWorkers 提供 API，Durable Objects 保存任务事件与执行租约。\n\n## 执行层\nWorkflows 调度隔离的 Sandbox，Codex App Server 负责模型和工具循环。\n\n## 持久化\nD1 保存业务目录，R2 保存产物、工作区与原生会话检查点。\n\n## 认证\n产品身份和 ChatGPT 模型连接分开管理。模型凭据不进入项目文件。\n';

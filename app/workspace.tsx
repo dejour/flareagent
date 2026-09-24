@@ -706,7 +706,7 @@ export function Workspace({
               {examples && (
                 <div className="example-note">
                   示例工作空间 ·
-                  以下内容用于展示任务与成果的组织方式，不是真实执行记录。
+                  以下内容用于展示任务与对话的组织方式，不是真实执行记录。
                 </div>
               )}
               <div className="task-table">
@@ -759,7 +759,7 @@ export function Workspace({
                     <p>
                       {search || filter !== 'all'
                         ? '试试其他关键词或筛选条件。'
-                        : '在上方描述目标。任务、过程和成果将在这里保存。'}
+                        : '在上方描述目标。任务对话和执行记录将在这里保存。'}
                     </p>
                   </div>
                 )}

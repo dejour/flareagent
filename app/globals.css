@@ -1053,36 +1053,6 @@ h2 {
 .inspector-section {
   margin-bottom: 30px;
 }
-.artifact-card {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 15px 10px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  width: 100%;
-  text-align: left;
-  margin-top: 15px;
-}
-.artifact-card:hover {
-  border-color: #aac4b5;
-}
-.artifact-card > span:nth-child(2) {
-  flex: 1;
-  font-size: 13px;
-  color: #5b6c60;
-  min-width: 0;
-}
-.artifact-card small {
-  display: block;
-  font-size: 12px;
-  color: #99a49b;
-  margin-top: 6px;
-  overflow-wrap: anywhere;
-}
-.file-icon {
-  color: #8fa698;
-}
 .inspector-empty {
   padding: 38px 0;
   text-align: center;
@@ -1167,16 +1137,6 @@ dd {
 .modal > .primary-button {
   width: 100%;
   margin-top: 8px;
-}
-.artifact-modal {
-  width: 680px;
-}
-.artifact-modal pre {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font: 14px/2 var(--font-sans);
-  color: #617165;
-  padding: 20px 0;
 }
 .icon-button {
   padding: 7px;
@@ -1540,14 +1500,6 @@ dd {
 .waiting-card label {
   display: block;
   margin: 12px 0;
-}
-.artifact-card {
-  text-decoration: none;
-  color: inherit;
-}
-.artifact-card > span:nth-child(2) {
-  min-width: 0;
-  overflow-wrap: anywhere;
 }
 .status.queued,
 .status.cancelling {
@@ -1955,9 +1907,6 @@ body {
 }
 .inspector-section {
   margin-bottom: 24px;
-}
-.artifact-card {
-  background: #fff;
 }
 .project-card,
 .settings-card {

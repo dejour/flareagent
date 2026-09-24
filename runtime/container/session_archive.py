@@ -15,7 +15,7 @@ WORKSPACE = os.environ.get('CLOUDAGENT_SESSION_WORKSPACE', '/workspace')
 LIMIT = 80 * 1024 * 1024
 SHA = re.compile(r'^[0-9a-f]{40,64}$')
 EMPTY_BASE = '0' * 40
-CACHE_DIRS = {'.codex', 'artifacts', 'node_modules', '__pycache__', '.next', 'dist', 'build', '.cache', '.venv'}
+CACHE_DIRS = {'.codex', 'node_modules', '__pycache__', '.next', 'dist', 'build', '.cache', '.venv'}
 
 
 def git(*args, input=None):

@@ -3,7 +3,7 @@ import './globals.css';
 import './refined.css';
 export const metadata: Metadata = {
   title: 'FlareAgent · 云端工作台',
-  description: '在云端组织任务、项目与 Agent，查看执行过程并收取成果。',
+  description: '在云端组织任务和项目，查看 Agent 对话与执行过程。',
 };
 export default function RootLayout({
   children,
