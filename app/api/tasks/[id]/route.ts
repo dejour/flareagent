@@ -101,9 +101,11 @@ export async function DELETE(request: Request, ctx: Context) {
       if (page.objects.length) await env.STORAGE.delete(page.objects.map((item) => item.key));
       cursor = page.truncated ? page.cursor : undefined;
     } while (cursor);
+    const hasLegacyArtifacts = await db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='artifacts'").first();
     await db.batch([
       db.prepare('DELETE FROM task_events WHERE task_id=?').bind(id),
       db.prepare('DELETE FROM task_attachments WHERE task_id=?').bind(id),
+      ...(hasLegacyArtifacts ? [db.prepare('DELETE FROM artifacts WHERE task_id=?').bind(id)] : []),
       db.prepare('DELETE FROM tasks WHERE id=? AND owner_id=?').bind(id, user),
     ]);
     return { ok: true };

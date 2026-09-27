@@ -167,9 +167,11 @@ export class SessionAgent extends DurableObject<Env> {
             if (legacy.objects.length)
               await this.env.BACKUP_BUCKET.delete(legacy.objects.map((item) => item.key));
           }
+          const hasLegacyArtifacts = await this.env.DB.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='artifacts'").first();
           await this.env.DB.batch([
             this.env.DB.prepare('DELETE FROM task_events WHERE task_id=?').bind(s.sessionId),
             this.env.DB.prepare('DELETE FROM task_attachments WHERE task_id=?').bind(s.sessionId),
+            ...(hasLegacyArtifacts ? [this.env.DB.prepare('DELETE FROM artifacts WHERE task_id=?').bind(s.sessionId)] : []),
             this.env.DB.prepare('DELETE FROM tasks WHERE id=? AND owner_id=?').bind(s.sessionId, s.userId),
           ]);
           await this.ctx.storage.deleteAll().catch(console.error);
