@@ -21,6 +21,7 @@ export class SessionSandbox {
     this.sandbox = getSandbox(env.SANDBOXES, id, {
       sleepAfter: '10m',
       enableDefaultSession: false,
+      transport: 'rpc',
     });
   }
   async alive() {
