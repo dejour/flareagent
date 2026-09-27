@@ -17,6 +17,8 @@ Each task has its own Durable Object, Sandbox, repository checkout, and Codex th
 
 Task messages can include up to four attachments (PNG, JPEG, WebP, GIF, PDF, TXT, or Markdown; 8 MB each). Attachments live in R2 and are restored into the task Sandbox when needed; image files are also passed to Codex as image inputs.
 
+Tasks can be deleted from the UI. Deletion stops an active run and removes its conversation, attachments, checkpoint, and isolated Sandbox. Only the current checkpoint is kept between completed turns.
+
 ## Requirements
 
 - Node.js 22.13 or later

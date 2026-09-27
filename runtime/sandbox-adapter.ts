@@ -1,10 +1,8 @@
 import {
   getSandbox,
-  type DirectoryBackup,
   type Sandbox,
 } from '@cloudflare/sandbox';
 
-export type WorkspaceBackup = DirectoryBackup;
 export type SandboxEnv = {
   SANDBOXES: DurableObjectNamespace<Sandbox>;
   BRIDGE_SECRET: string;
@@ -52,9 +50,6 @@ export class SessionSandbox {
     const filePath = this.attachmentPath(id, extension);
     await this.sandbox.writeFile(filePath, body);
     return filePath;
-  }
-  async restore(handle: WorkspaceBackup) {
-    await this.sandbox.restoreBackup(handle);
   }
   async exportChanges(base: string): Promise<ArrayBuffer> {
     const response = await this.sandbox.containerFetch(

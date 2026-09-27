@@ -1,6 +1,6 @@
 # FlareAgent execution architecture
 
-Updated 2026-09-20. This is the compact checkpoint design used by new sessions.
+Updated 2026-09-28. This is the compact checkpoint design used by FlareAgent.
 
 ```mermaid
 flowchart TD
@@ -24,7 +24,7 @@ User attachments are separate R2 objects linked to task messages in D1. Before e
 
 If the Sandbox disappears, the SessionAgent clones the authorized GitHub repository, checks out the recorded base commit, restores the checkpoint, starts Codex, and resumes the same thread. Dependencies and dev servers are recreated when the work requires them. Cold recovery can therefore be slower than restoring a full workspace. The recorded commit must remain fetchable from GitHub; a force push, repository deletion, or revoked access can prevent recovery. Ignored files, dependency directories, build outputs, process state, and caches are deliberately not checkpointed. The archive has an 80 MiB uncompressed limit.
 
-An interrupted active turn is never automatically replayed because it may have pushed code or performed another external side effect. GitHub write operations record dispatch before the call; uncertain outcomes require inspection before another attempt. Work created after the latest completed checkpoint can be lost if the Sandbox fails during a turn. Existing sessions with an old Sandbox directory backup can still restore it and migrate to a compact checkpoint after their next completed turn.
+An interrupted active turn is never automatically replayed because it may have pushed code or performed another external side effect. GitHub write operations record dispatch before the call; uncertain outcomes require inspection before another attempt. Work created after the latest completed checkpoint can be lost if the Sandbox fails during a turn.
 
 Account login uses an account-scoped Sandbox with the same image as coding sessions. It starts a short-lived Codex bridge for device authorization and model discovery, saves encrypted credentials in AccountAgent, and is destroyed after use. Coding sessions retain their own isolated Sandbox IDs.
 

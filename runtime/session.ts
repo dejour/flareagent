@@ -5,13 +5,11 @@ import { CodexAdapter, type CodexSnapshot } from './codex-adapter';
 import {
   SessionSandbox,
   type SandboxEnv,
-  type WorkspaceBackup,
 } from './sandbox-adapter';
 
 type Env = SandboxEnv & {
   DB: D1Database;
   STORAGE: R2Bucket;
-  BACKUP_BUCKET: R2Bucket;
   ACCOUNTS: DurableObjectNamespace<AccountAgent>;
 };
 type Task = {
@@ -45,7 +43,6 @@ type Session = {
   codexThreadId: string | null;
   currentRun: Run | null;
   status: string;
-  latestBackup: WorkspaceBackup | null;
   baseCommit: string | null;
   latestCheckpointKey: string | null;
   operationState: Record<string, 'started' | 'succeeded' | 'uncertain'>;
@@ -108,7 +105,6 @@ export class SessionAgent extends DurableObject<Env> {
         codexThreadId: null,
         currentRun: null,
         status: task.status,
-        latestBackup: null,
         baseCommit: null,
         latestCheckpointKey: null,
         operationState: {},
@@ -160,18 +156,9 @@ export class SessionAgent extends DurableObject<Env> {
               await this.env.STORAGE.delete(page.objects.map((item) => item.key));
             cursor = page.truncated ? page.cursor : undefined;
           } while (cursor);
-          if (s.latestBackup) {
-            const legacy = await this.env.BACKUP_BUCKET.list({
-              prefix: `backups/${s.latestBackup.id}/`,
-            });
-            if (legacy.objects.length)
-              await this.env.BACKUP_BUCKET.delete(legacy.objects.map((item) => item.key));
-          }
-          const hasLegacyArtifacts = await this.env.DB.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='artifacts'").first();
           await this.env.DB.batch([
             this.env.DB.prepare('DELETE FROM task_events WHERE task_id=?').bind(s.sessionId),
             this.env.DB.prepare('DELETE FROM task_attachments WHERE task_id=?').bind(s.sessionId),
-            ...(hasLegacyArtifacts ? [this.env.DB.prepare('DELETE FROM artifacts WHERE task_id=?').bind(s.sessionId)] : []),
             this.env.DB.prepare('DELETE FROM tasks WHERE id=? AND owner_id=?').bind(s.sessionId, s.userId),
           ]);
           await this.ctx.storage.deleteAll().catch(console.error);
@@ -182,7 +169,7 @@ export class SessionAgent extends DurableObject<Env> {
             sessionId: s.sessionId,
             sandboxId: s.sandboxId,
             codexThreadId: s.codexThreadId,
-            latestBackupId: s.latestCheckpointKey || s.latestBackup?.id || null,
+            latestCheckpointKey: s.latestCheckpointKey,
             lastFailure: (await this.ctx.storage.get<string>('lastFailure')) || null,
           });
         const body = await request.json<{ action: string; content?: string; attachments?: unknown }>();
@@ -356,11 +343,6 @@ export class SessionAgent extends DurableObject<Env> {
           const saved = await this.env.STORAGE.get(s.latestCheckpointKey);
           if (!saved) throw new Error('Session checkpoint is missing');
           await box.importChanges(s.baseCommit, await saved.arrayBuffer());
-        } else if (s.latestBackup) {
-          // Existing sessions keep their old full backup until a compact
-          // checkpoint successfully replaces it.
-          await box.restore(s.latestBackup);
-          if (s.repo && !s.baseCommit) s.baseCommit = await box.baseCommit();
         } else {
           const task = await this.task(s.userId, s.sessionId);
           const p = await this.project(task);
@@ -395,7 +377,6 @@ export class SessionAgent extends DurableObject<Env> {
     const previous = s.latestCheckpointKey;
     s.baseCommit = base;
     s.latestCheckpointKey = key;
-    s.latestBackup = null;
     await this.save(s);
     if (previous) await this.env.STORAGE.delete(previous).catch(console.error);
     return key;
