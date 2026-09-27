@@ -152,7 +152,7 @@ export class SessionAgent extends DurableObject<Env> {
         if (request.method === 'DELETE') {
           await this.box(s).destroy();
           await this.ctx.storage.deleteAlarm();
-          const prefix = `${s.userId}/tasks/${s.sessionId}/checkpoints/`;
+          const prefix = `${s.userId}/tasks/${s.sessionId}/`;
           let cursor: string | undefined;
           do {
             const page = await this.env.STORAGE.list({ prefix, cursor });
@@ -169,6 +169,7 @@ export class SessionAgent extends DurableObject<Env> {
           }
           await this.env.DB.batch([
             this.env.DB.prepare('DELETE FROM task_events WHERE task_id=?').bind(s.sessionId),
+            this.env.DB.prepare('DELETE FROM task_attachments WHERE task_id=?').bind(s.sessionId),
             this.env.DB.prepare('DELETE FROM tasks WHERE id=? AND owner_id=?').bind(s.sessionId, s.userId),
           ]);
           await this.ctx.storage.deleteAll().catch(console.error);
@@ -182,10 +183,22 @@ export class SessionAgent extends DurableObject<Env> {
             latestBackupId: s.latestCheckpointKey || s.latestBackup?.id || null,
             lastFailure: (await this.ctx.storage.get<string>('lastFailure')) || null,
           });
-        const body = await request.json<Record<string, string>>();
+        const body = await request.json<{ action: string; content?: string; attachments?: unknown }>();
         if (body.action === 'message') {
           if (!body.content?.trim() || body.content.length > 20000)
             return json({ error: '补充要求无效。' }, 400);
+          const attachments = body.attachments === undefined ? [] : body.attachments;
+          if (!Array.isArray(attachments) || attachments.length > 4 ||
+              attachments.some((value) => typeof value !== 'string' || !/^[a-f0-9-]{36}$/.test(value)) ||
+              new Set(attachments).size !== attachments.length)
+            return json({ error: '附件无效。' }, 400);
+          if (attachments.length) {
+            const placeholders = attachments.map(() => '?').join(',');
+            const owned = await this.env.DB.prepare(`SELECT id FROM task_attachments WHERE task_id=? AND event_id IS NULL AND id IN (${placeholders})`)
+              .bind(s.sessionId, ...attachments).all();
+            if (owned.results.length !== attachments.length)
+              return json({ error: '附件无效或已发送。' }, 400);
+          }
           if (s.currentRun && s.status !== 'needs_attention')
             return json({ error: '请先停止当前轮次，再补充要求。' }, 409);
           if (s.status === 'needs_attention') {
@@ -200,11 +213,12 @@ export class SessionAgent extends DurableObject<Env> {
             if (s.threadStarted !== true) s.codexThreadId = null;
             await this.save(s);
           }
+          const eventId = crypto.randomUUID();
           await this.env.DB.batch([
             this.env.DB.prepare(
               "INSERT INTO task_events(id,task_id,kind,content,created_at) VALUES(?,?,'user',?,?)",
             ).bind(
-              crypto.randomUUID(),
+              eventId,
               s.sessionId,
               body.content.trim(),
               stamp(),
@@ -212,6 +226,9 @@ export class SessionAgent extends DurableObject<Env> {
             this.env.DB.prepare(
               'UPDATE tasks SET updated_at=? WHERE id=? AND owner_id=?',
             ).bind(stamp(), s.sessionId, s.userId),
+            ...attachments.map((attachmentId) => this.env.DB.prepare(
+              'UPDATE task_attachments SET event_id=? WHERE id=? AND task_id=? AND event_id IS NULL',
+            ).bind(eventId, attachmentId, s.sessionId)),
           ]);
           return json({ ok: true });
         }
@@ -413,30 +430,47 @@ export class SessionAgent extends DurableObject<Env> {
       await this.save(s);
       return;
     }
-    await this.ensure(s);
+    const box = await this.ensure(s);
     const auth = await this.account(s.userId).sessionCredentials(s.userId);
     await this.codex(s).credentials(auth);
     const task = await this.task(s.userId, s.sessionId);
     const p = await this.project(task);
     const messages = await this.env.DB.prepare(
-      "SELECT content FROM task_events WHERE task_id=? AND kind='user' ORDER BY created_at,rowid",
+      "SELECT id,content FROM task_events WHERE task_id=? AND kind='user' ORDER BY created_at,rowid",
     )
       .bind(s.sessionId)
-      .all<{ content: string }>();
+      .all<{ id: string; content: string }>();
+    const attachments = await this.env.DB.prepare(
+      'SELECT id,event_id,name,mime FROM task_attachments WHERE task_id=? AND event_id IS NOT NULL ORDER BY created_at',
+    ).bind(s.sessionId).all<{ id: string; event_id: string; name: string; mime: string }>();
+    const paths = new Map<string, string>();
+    for (const file of attachments.results) {
+      const extension = file.name.split('.').at(-1)!.toLowerCase();
+      const path = box.attachmentPath(file.id, extension);
+      paths.set(file.id, path);
+      if (await box.hasAttachment(file.id, extension)) continue;
+      const object = await this.env.STORAGE.get(`${s.userId}/tasks/${s.sessionId}/attachments/${file.id}`);
+      if (!object) throw new Error(`附件已丢失：${file.name}`);
+      await box.writeAttachment(file.id, extension, object.body);
+    }
     run.inputCount = messages.results.length;
+    const currentMessages = messages.results.slice(s.consumedMessages);
+    const currentIds = new Set(currentMessages.map((message) => message.id));
+    const currentFiles = attachments.results.filter((file) => currentIds.has(file.event_id));
     const prompt =
       (p?.description ? `项目背景：\n${p.description}\n\n` : '') +
-      (messages.results
-        .slice(s.consumedMessages)
+      (currentMessages
         .map((m) => m.content)
         .join('\n\n补充要求：\n') ||
-        '继续当前会话。先检查已有修改与外部操作状态，再推进任务。');
+        '继续当前会话。先检查已有修改与外部操作状态，再推进任务。') +
+      (currentFiles.length ? `\n\n本轮附件：\n${currentFiles.map((file) => `${file.name}: ${paths.get(file.id)}`).join('\n')}` : '');
     run.dispatched = true;
     await this.save(s);
     const result = await this.codex(s).startTurn({
       runId: run.id,
       threadId: s.codexThreadId,
       prompt: prompt.slice(-60000),
+      images: currentFiles.filter((file) => file.mime.startsWith('image/')).map((file) => paths.get(file.id)!),
       model: task.model,
       hasRepo: !!s.repo,
       dynamicTools: s.repo ? githubTools : [],

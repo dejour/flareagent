@@ -59,3 +59,16 @@ export const taskEvents = sqliteTable(
   },
   (table) => [index('events_task_created').on(table.taskId, table.createdAt)],
 );
+export const taskAttachments = sqliteTable(
+  'task_attachments',
+  {
+    id: text('id').primaryKey(),
+    taskId: text('task_id').notNull().references(() => tasks.id),
+    eventId: text('event_id'),
+    name: text('name').notNull(),
+    mime: text('mime').notNull(),
+    size: integer('size').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [index('attachments_task_event').on(table.taskId, table.eventId)],
+);

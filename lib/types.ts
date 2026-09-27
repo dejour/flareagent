@@ -25,6 +25,7 @@ export type ModelOption = {
   displayName: string;
   isDefault?: boolean;
   defaultReasoningEffort?: string;
+  inputModalities?: string[];
 };
 export type Project = {
   github_repo?: string | null;
@@ -39,6 +40,7 @@ export type TaskEvent = {
   kind: string;
   content: string;
   created_at: string;
+  attachments?: { id: string; name: string; mime: string; size: number }[];
 };
 export const statuses: Record<TaskStatus, string> = {
   draft: '草稿',

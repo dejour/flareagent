@@ -388,11 +388,12 @@ async function handle(url, body) {
     });
     return {
       models: (result.data || []).map(
-        ({ model, displayName, isDefault, defaultReasoningEffort }) => ({
+        ({ model, displayName, isDefault, defaultReasoningEffort, inputModalities }) => ({
           model,
           displayName,
           isDefault,
           defaultReasoningEffort,
+          inputModalities,
         }),
       ),
     };
@@ -457,7 +458,10 @@ async function handle(url, body) {
     try {
       const turn = await rpc('turn/start', {
         threadId: active.threadId,
-        input: [{ type: 'text', text: body.prompt }],
+        input: [
+          { type: 'text', text: body.prompt },
+          ...(body.images || []).map((imagePath) => ({ type: 'localImage', path: imagePath })),
+        ],
         approvalPolicy: 'never',
         sandboxPolicy: { type: 'dangerFullAccess' },
       });

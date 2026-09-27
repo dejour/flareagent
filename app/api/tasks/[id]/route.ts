@@ -1,4 +1,5 @@
 import { getDb } from '@/db';
+import { env } from 'cloudflare:workers';
 import { owner, route, writeGuard, readBody, HttpError } from '@/lib/server';
 import type { Task } from '@/lib/types';
 import { runtime, hasRuntime } from '@/lib/runtime';
@@ -21,9 +22,16 @@ export async function GET(_request: Request, ctx: Context) {
       )
       .bind(id)
       .all();
+    const attachments = await db
+      .prepare('SELECT id,event_id,name,mime,size FROM task_attachments WHERE task_id=? AND event_id IS NOT NULL ORDER BY created_at')
+      .bind(id)
+      .all<{ id: string; event_id: string; name: string; mime: string; size: number }>();
     return {
       task,
-      events: events.results,
+      events: events.results.map((event) => ({
+        ...event,
+        attachments: attachments.results.filter((file) => file.event_id === event.id),
+      })),
     };
   });
 }
@@ -87,8 +95,15 @@ export async function DELETE(request: Request, ctx: Context) {
       .first();
     if (!task) throw new HttpError(404, '任务不存在。');
     if (hasRuntime()) return runtime(user, `/tasks/${id}`, 'DELETE');
+    let cursor: string | undefined;
+    do {
+      const page = await env.STORAGE.list({ prefix: `${user}/tasks/${id}/`, cursor });
+      if (page.objects.length) await env.STORAGE.delete(page.objects.map((item) => item.key));
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
     await db.batch([
       db.prepare('DELETE FROM task_events WHERE task_id=?').bind(id),
+      db.prepare('DELETE FROM task_attachments WHERE task_id=?').bind(id),
       db.prepare('DELETE FROM tasks WHERE id=? AND owner_id=?').bind(id, user),
     ]);
     return { ok: true };

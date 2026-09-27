@@ -15,6 +15,8 @@ Browser → Web Worker → Runtime Worker → SessionAgent Durable Object
 
 Each task has its own Durable Object, Sandbox, repository checkout, and Codex thread. D1 stores the task index and conversation events. R2 holds a compact checkpoint of Git changes and Codex rollout files. The Sandbox can be recreated; a completed checkpoint lets the same conversation resume. Interrupted turns are not automatically replayed. See [architecture](docs/ARCHITECTURE.md) for recovery limits.
 
+Task messages can include up to four attachments (PNG, JPEG, WebP, GIF, PDF, TXT, or Markdown; 8 MB each). Attachments live in R2 and are restored into the task Sandbox when needed; image files are also passed to Codex as image inputs.
+
 ## Requirements
 
 - Node.js 22.13 or later

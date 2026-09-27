@@ -28,6 +28,7 @@ export class CodexAdapter {
     runId: string;
     threadId: string | null;
     prompt: string;
+    images: string[];
     model: string | null;
     hasRepo: boolean;
     dynamicTools: unknown[];

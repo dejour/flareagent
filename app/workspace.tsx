@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
+import NextImage from 'next/image';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import {
@@ -22,6 +23,8 @@ import {
   Link2,
   Square,
   Trash2,
+  Paperclip,
+  Image as ImageIcon,
   AlertCircle,
   ExternalLink,
 } from 'lucide-react';
@@ -70,6 +73,8 @@ export function Workspace({
     status: 'disconnected',
   });
   const [prompt, setPrompt] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
+  const fileInput = useRef<HTMLInputElement>(null);
   const [model, setModel] = useState('');
   const [models, setModels] = useState<ModelOption[]>([]);
   const [projectId, setProjectId] = useState('');
@@ -270,12 +275,14 @@ export function Workspace({
     setError('');
     if (next !== 'task') {
       setSelected(null);
+      setFiles([]);
       location.hash = next;
     }
   }
   async function openTask(task: Task) {
     setSelected(task);
     setPrompt('');
+    setFiles([]);
     nav('task');
     history.replaceState(null, '', '#task/' + task.id);
     const version = taskRequest.current;
@@ -293,6 +300,10 @@ export function Workspace({
   }
   async function createTask() {
     if (!prompt.trim() || busy) return;
+    if (!supportsImages(model)) {
+      setError('所选模型不支持图片输入，请切换模型。');
+      return;
+    }
     if (!user) {
       setError('登录工作台后即可保存任务。模型账号需要在设置中单独连接。');
       return;
@@ -316,10 +327,16 @@ export function Workspace({
       const d = await api<{ task: Task }>('tasks', 'POST', {
         ...pendingCreation.current,
         projectId: projectId || null,
+        deferStart: files.length > 0,
       });
+      if (files.length) {
+        await uploadFiles(d.task.id, true);
+        await api('tasks/' + d.task.id, 'PATCH', { action: 'start' });
+      }
       pendingCreation.current = null;
       setExamples(false);
       setPrompt('');
+      setFiles([]);
       await refresh();
       await openTask(d.task);
     } catch (e) {
@@ -362,12 +379,19 @@ export function Workspace({
   }
   async function sendMessage() {
     if (!selected || selected.demo || !prompt.trim() || busy) return;
+    if (!supportsImages(selected.model || '')) {
+      setError('当前任务使用的模型不支持图片输入。');
+      return;
+    }
     setBusy(true);
     try {
+      const attachments = await uploadFiles(selected.id);
       await api('tasks/' + selected.id + '/events', 'POST', {
         content: prompt.trim(),
+        attachments,
       });
       setPrompt('');
+      setFiles([]);
       await api('tasks/' + selected.id, 'PATCH', { action: 'resume' });
       await openTask(selected);
     } catch (e) {
@@ -375,6 +399,38 @@ export function Workspace({
     } finally {
       setBusy(false);
     }
+  }
+  async function uploadFiles(taskId: string, initial = false): Promise<string[]> {
+    const ids: string[] = [];
+    for (const file of files) {
+      const form = new FormData();
+      form.set('file', file);
+      const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/attachments${initial ? '?initial=1' : ''}`, {
+        method: 'POST',
+        body: form,
+      });
+      const result = await response.json() as { id?: string; error?: string };
+      if (!response.ok || !result.id) throw new Error(result.error || '附件上传失败。');
+      ids.push(result.id);
+    }
+    return ids;
+  }
+  function selectFiles(list: FileList | null) {
+    if (!list) return;
+    const next = [...files, ...Array.from(list)];
+    if (next.length > 4 || next.some((file) => file.size > 8 * 1024 * 1024 || !/\.(png|jpe?g|webp|gif|pdf|txt|md)$/i.test(file.name))) {
+      setError('每条消息最多 4 个附件，单个不超过 8 MB；支持图片、PDF、TXT 和 Markdown。');
+      if (fileInput.current) fileInput.current.value = '';
+      return;
+    }
+    setFiles(next);
+    setError('');
+    if (fileInput.current) fileInput.current.value = '';
+  }
+  function supportsImages(selectedModel: string) {
+    if (!files.some((file) => /\.(png|jpe?g|webp|gif)$/i.test(file.name))) return true;
+    const option = models.find((item) => item.model === selectedModel) || models.find((item) => item.isDefault);
+    return !option?.inputModalities || option.inputModalities.includes('image');
   }
   async function githubAction(disconnect = false) {
     setBusy(true);
@@ -458,6 +514,17 @@ export function Workspace({
   );
   const promptBox = (detail = false) => (
     <div className="composer">
+      {!!files.length && (
+        <div className="composer-files">
+          {files.map((file, index) => (
+            <span key={`${file.name}-${index}`} className="composer-file">
+              {file.type.startsWith('image/') ? <ImageIcon size={14} /> : <Paperclip size={14} />}
+              {file.name}
+              <button aria-label={`移除 ${file.name}`} onClick={() => setFiles((current) => current.filter((_, i) => i !== index))}><X size={13} /></button>
+            </span>
+          ))}
+        </div>
+      )}
       <textarea
         aria-label={detail ? '补充任务指令' : '描述新任务'}
         placeholder={
@@ -477,6 +544,17 @@ export function Workspace({
       />
       <div className="composer-bottom">
         <div className="composer-options">
+          <input
+            ref={fileInput}
+            type="file"
+            accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.txt,.md"
+            multiple
+            hidden
+            onChange={(event) => selectFiles(event.target.files)}
+          />
+          <button className="composer-link" aria-label="添加附件" disabled={busy || !!(detail && selected?.demo)} onClick={() => fileInput.current?.click()}>
+            <Paperclip size={15} /> 附件
+          </button>
           {detail ? (
             <span>
               <Bot size={15} />
@@ -1080,6 +1158,18 @@ export function Workspace({
                           </time>
                         </div>
                         <p>{item.event.content}</p>
+                        {!!item.event.attachments?.length && (
+                          <div className="message-attachments">
+                            {item.event.attachments.map((file) => {
+                              const url = `/api/tasks/${encodeURIComponent(item.event.task_id)}/attachments/${encodeURIComponent(file.id)}`;
+                              return file.mime.startsWith('image/') ? (
+                                <a key={file.id} href={url} target="_blank" rel="noopener noreferrer"><NextImage src={url} alt={file.name} width={280} height={240} unoptimized /></a>
+                              ) : (
+                                <a key={file.id} href={url} className="message-file"><Paperclip size={14} />{file.name}</a>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     </article>
                   ) : (

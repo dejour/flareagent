@@ -17,6 +17,7 @@ export async function POST(request: Request) {
     const prompt = string(body.prompt, 20000, '任务要求'),
       requestId = string(body.requestId, 100, '请求标识'),
       model = body.model ? string(body.model, 100, '模型') : null;
+    const deferStart = body.deferStart === true;
     if (model && !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(model))
       throw new HttpError(400, '模型标识无效。');
     let projectId: null | string = null;
@@ -92,7 +93,7 @@ export async function POST(request: Request) {
       task.model !== model
     )
       throw new HttpError(409, '请求标识已用于另一项任务。');
-    if (task && hasRuntime()) {
+    if (task && hasRuntime() && !deferStart) {
       const execution = await runtime(user, `/tasks/${task.id}`, 'POST', {
         action: 'start',
       }).catch(() => null);

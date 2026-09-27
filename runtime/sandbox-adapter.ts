@@ -38,6 +38,20 @@ export class SessionSandbox {
     await this.prepare();
     await this.sandbox.writeFile('/workspace/.cloudagent-session', this.id);
   }
+  attachmentPath(id: string, extension: string) {
+    if (!/^[a-f0-9-]{36}$/.test(id) || !/^[a-z0-9]{1,5}$/.test(extension))
+      throw new Error('Invalid attachment path');
+    return `/workspace/attachments/${id}.${extension}`;
+  }
+  async hasAttachment(id: string, extension: string) {
+    return (await this.sandbox.exec(`test -f ${this.attachmentPath(id, extension)}`)).exitCode === 0;
+  }
+  async writeAttachment(id: string, extension: string, body: ReadableStream<Uint8Array>) {
+    await this.sandbox.exec('mkdir -p /workspace/attachments && chown 1000:1000 /workspace/attachments');
+    const filePath = this.attachmentPath(id, extension);
+    await this.sandbox.writeFile(filePath, body);
+    return filePath;
+  }
   async restore(handle: WorkspaceBackup) {
     await this.sandbox.restoreBackup(handle);
   }
