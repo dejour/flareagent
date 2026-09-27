@@ -1113,6 +1113,12 @@ dd {
   max-height: 90dvh;
   overflow: auto;
 }
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+}
 .modal label {
   display: block;
   margin: 20px 0;

@@ -11,6 +11,7 @@ import {
 type Env = SandboxEnv & {
   DB: D1Database;
   STORAGE: R2Bucket;
+  BACKUP_BUCKET: R2Bucket;
   ACCOUNTS: DurableObjectNamespace<AccountAgent>;
 };
 type Task = {
@@ -148,6 +149,31 @@ export class SessionAgent extends DurableObject<Env> {
         if (!owner || !match) return json({ error: 'Not found' }, 404);
         const task = await this.task(owner, match[1]);
         const s = await this.state(task);
+        if (request.method === 'DELETE') {
+          await this.box(s).destroy();
+          await this.ctx.storage.deleteAlarm();
+          const prefix = `${s.userId}/tasks/${s.sessionId}/checkpoints/`;
+          let cursor: string | undefined;
+          do {
+            const page = await this.env.STORAGE.list({ prefix, cursor });
+            if (page.objects.length)
+              await this.env.STORAGE.delete(page.objects.map((item) => item.key));
+            cursor = page.truncated ? page.cursor : undefined;
+          } while (cursor);
+          if (s.latestBackup) {
+            const legacy = await this.env.BACKUP_BUCKET.list({
+              prefix: `backups/${s.latestBackup.id}/`,
+            });
+            if (legacy.objects.length)
+              await this.env.BACKUP_BUCKET.delete(legacy.objects.map((item) => item.key));
+          }
+          await this.env.DB.batch([
+            this.env.DB.prepare('DELETE FROM task_events WHERE task_id=?').bind(s.sessionId),
+            this.env.DB.prepare('DELETE FROM tasks WHERE id=? AND owner_id=?').bind(s.sessionId, s.userId),
+          ]);
+          await this.ctx.storage.deleteAll().catch(console.error);
+          return json({ ok: true });
+        }
         if (request.method === 'GET')
           return json({
             sessionId: s.sessionId,
@@ -231,6 +257,8 @@ export class SessionAgent extends DurableObject<Env> {
         return json({ error: '操作无效。' }, 400);
       } catch (error) {
         console.error('Session request failed', error);
+        if (error instanceof Error && error.message === '任务不存在。')
+          return json({ error: error.message }, 404);
         return json(
           {
             error:

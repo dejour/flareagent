@@ -75,3 +75,22 @@ export async function PATCH(request: Request, ctx: Context) {
     return { status: next };
   });
 }
+export async function DELETE(request: Request, ctx: Context) {
+  return route(async () => {
+    writeGuard(request);
+    const user = await owner();
+    const { id } = await ctx.params;
+    const db = getDb();
+    const task = await db
+      .prepare('SELECT id FROM tasks WHERE id=? AND owner_id=?')
+      .bind(id, user)
+      .first();
+    if (!task) throw new HttpError(404, '任务不存在。');
+    if (hasRuntime()) return runtime(user, `/tasks/${id}`, 'DELETE');
+    await db.batch([
+      db.prepare('DELETE FROM task_events WHERE task_id=?').bind(id),
+      db.prepare('DELETE FROM tasks WHERE id=? AND owner_id=?').bind(id, user),
+    ]);
+    return { ok: true };
+  });
+}

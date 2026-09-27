@@ -21,6 +21,7 @@ import {
   ShieldCheck,
   Link2,
   Square,
+  Trash2,
   AlertCircle,
   ExternalLink,
 } from 'lucide-react';
@@ -79,6 +80,7 @@ export function Workspace({
   const [error, setError] = useState('');
   const [mobile, setMobile] = useState(false);
   const [projectDialog, setProjectDialog] = useState(false);
+  const [deleteDialog, setDeleteDialog] = useState(false);
   const [projectName, setProjectName] = useState('');
   const [github, setGithub] = useState<{
     configured: boolean;
@@ -335,6 +337,23 @@ export function Workspace({
       });
       await refresh();
       await openTask(selected);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function deleteTask() {
+    if (!selected || selected.demo || busy) return;
+    const id = selected.id;
+    setBusy(true);
+    setError('');
+    try {
+      await api('tasks/' + id, 'DELETE');
+      setDeleteDialog(false);
+      setTasks((current) => current.filter((task) => task.id !== id));
+      setEvents([]);
+      nav('home');
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -1018,6 +1037,17 @@ export function Workspace({
                         启动任务
                       </Button>
                     )}
+                  {!selected.demo && (
+                    <Button
+                      variant="outline"
+                      className="secondary-button"
+                      disabled={busy}
+                      onClick={() => setDeleteDialog(true)}
+                    >
+                      <Trash2 size={14} />
+                      删除
+                    </Button>
+                  )}
                 </div>
               </div>
               <h1>{selected.title}</h1>
@@ -1208,6 +1238,31 @@ export function Workspace({
           >
             {busy ? '正在保存…' : '创建项目'}
           </button>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={deleteDialog} onOpenChange={setDeleteDialog}>
+        <DialogContent className="modal managed-dialog" showCloseButton={false}>
+          <div className="section-heading">
+            <DialogTitle>删除任务？</DialogTitle>
+            <button
+              className="icon-button"
+              aria-label="关闭"
+              disabled={busy}
+              onClick={() => setDeleteDialog(false)}
+            >
+              <X size={19} />
+            </button>
+          </div>
+          <p>任务、对话记录和保存的工作区改动将被永久删除；正在运行的任务也会停止。</p>
+          {error && <p role="alert" className="dialog-error">{error}</p>}
+          <div className="dialog-actions">
+            <Button variant="outline" disabled={busy} onClick={() => setDeleteDialog(false)}>
+              取消
+            </Button>
+            <Button disabled={busy} onClick={() => void deleteTask()}>
+              {busy ? '正在删除…' : '删除任务'}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
