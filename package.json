@@ -18,6 +18,7 @@
     "deploy": "node scripts/deploy.mjs",
     "test:auth": "node --experimental-strip-types --test scripts/access.test.mjs",
     "test:github": "node --test scripts/github.test.mjs",
+    "test:runtime": "node --test scripts/session.test.mjs scripts/bridge.test.mjs",
     "test:crypto": "node --experimental-strip-types --test scripts/crypto.test.mjs"
   },
   "dependencies": {

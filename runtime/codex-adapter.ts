@@ -68,6 +68,9 @@ export class CodexAdapter {
   finish(runId: string) {
     return this.sandbox.bridge('/finish', { runId });
   }
+  retire(runId: string) {
+    return this.sandbox.bridge('/retire', { runId });
+  }
   checkpoint() {
     return this.sandbox.bridge('/checkpoint');
   }

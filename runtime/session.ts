@@ -42,6 +42,7 @@ type Session = {
   sandboxId: string;
   codexThreadId: string | null;
   currentRun: Run | null;
+  interruptedRun?: Run | null;
   status: string;
   baseCommit: string | null;
   latestCheckpointKey: string | null;
@@ -116,6 +117,17 @@ export class SessionAgent extends DurableObject<Env> {
   }
   private async save(s: Session) {
     await this.ctx.storage.put('session', s);
+  }
+  async diagnostics(owner: string) {
+    const s = await this.ctx.storage.get<Session>('session');
+    if (!s || s.userId !== owner) throw new Error('Owner mismatch');
+    const operations = await this.ctx.storage.list({ prefix: 'op:' });
+    return {
+      session: s,
+      lastFailure: await this.ctx.storage.get('lastFailure'),
+      failures: await this.ctx.storage.get('failureHistory'),
+      operations: Object.fromEntries(operations),
+    };
   }
   private async transition(
     s: Session,
@@ -198,6 +210,7 @@ export class SessionAgent extends DurableObject<Env> {
               .bind(s.sessionId)
               .first<{ count: number }>();
             s.consumedMessages = previous?.count || 0;
+            s.interruptedRun = s.currentRun || s.interruptedRun;
             s.currentRun = null;
             if (s.threadStarted !== true) s.codexThreadId = null;
             await this.save(s);
@@ -292,13 +305,20 @@ export class SessionAgent extends DurableObject<Env> {
         await this.ctx.storage.delete('lastFailure');
       } catch (error) {
         console.error('Session alarm failed', error);
+        const history = (await this.ctx.storage.get<unknown[]>('failureHistory')) || [];
+        await this.ctx.storage.put('failureHistory', [...history, {
+          at: stamp(), runId: s.currentRun?.id, dispatched: s.currentRun?.dispatched,
+          error: error instanceof Error ? error.message.slice(0, 500) : 'Unknown error',
+        }].slice(-10));
         await this.ctx.storage.put(
           'lastFailure',
           error instanceof Error ? error.message.slice(0, 500) : 'Unknown error',
         );
         // Startup may report "Container starting" before any Codex turn was
         // dispatched. Retrying that preparation cannot replay agent work.
-        if (s.status === 'queued' || (s.currentRun && !s.currentRun.dispatched)) {
+        // Retrying observation/result delivery does not start another Codex
+        // turn. Tool operations already persist their result before delivery.
+        if (s.status === 'queued' || s.currentRun) {
           const count =
             ((await this.ctx.storage.get<number>('failures')) || 0) + 1;
           if (count < 6) {
@@ -308,6 +328,7 @@ export class SessionAgent extends DurableObject<Env> {
           }
         }
         if (s.currentRun || s.status === 'queued') {
+          s.interruptedRun = s.currentRun;
           s.currentRun = null;
           await this.transition(
             s,
@@ -381,6 +402,40 @@ export class SessionAgent extends DurableObject<Env> {
     if (previous) await this.env.STORAGE.delete(previous).catch(console.error);
     return key;
   }
+  private async storeEvents(s: Session, runId: string, snapshot: Snapshot) {
+    if (!snapshot.events.length) return;
+    await this.env.DB.batch(snapshot.events.map((e) =>
+      this.env.DB.prepare(
+        'INSERT OR IGNORE INTO task_events(id,task_id,kind,content,created_at) VALUES(?,?,?,?,?)',
+      ).bind(`${runId}:${e.seq}`, s.sessionId, e.kind, e.content, e.createdAt),
+    ));
+  }
+  private async retirePrevious(s: Session, box: SessionSandbox) {
+    const codex = this.codex(s);
+    let snapshot = await codex.state();
+    if (!snapshot.active || snapshot.active.runId === s.currentRun?.id) return;
+    if (s.codexThreadId && snapshot.active.threadId !== s.codexThreadId)
+      throw new Error('Sandbox thread does not match this session');
+    const previous = snapshot.active;
+    // Stop the old process before draining events or allowing another mutation.
+    // This does not re-execute the old prompt or any pending GitHub operation.
+    await codex.retire(previous.runId);
+    let ack = 0;
+    do {
+      snapshot = await codex.state(ack);
+      await this.storeEvents(s, previous.runId, snapshot);
+      ack = snapshot.events.at(-1)?.seq || ack;
+    } while (snapshot.events.length === 50);
+    const { credentials } = await codex.credentials();
+    if (credentials) await this.account(s.userId).sessionSaveCredentials(s.userId, credentials);
+    await codex.checkpoint();
+    s.codexThreadId = previous.threadId;
+    const key = await this.checkpoint(s, box);
+    await this.env.DB.prepare('UPDATE tasks SET thread_id=?,checkpoint_key=? WHERE id=? AND owner_id=?')
+      .bind(s.codexThreadId, key, s.sessionId, s.userId).run();
+    s.interruptedRun = null;
+    await this.save(s);
+  }
   private async start(s: Session) {
     const run: Run = s.currentRun || {
       id: crypto.randomUUID(),
@@ -400,6 +455,7 @@ export class SessionAgent extends DurableObject<Env> {
     if (run.dispatched) {
       const snapshot = await this.codex(s).state();
       if (snapshot.active?.runId !== run.id) {
+        s.interruptedRun = run;
         s.currentRun = null;
         await this.transition(
           s,
@@ -414,6 +470,7 @@ export class SessionAgent extends DurableObject<Env> {
       return;
     }
     const box = await this.ensure(s);
+    await this.retirePrevious(s, box);
     const auth = await this.account(s.userId).sessionCredentials(s.userId);
     await this.codex(s).credentials(auth);
     const task = await this.task(s.userId, s.sessionId);
@@ -468,6 +525,7 @@ export class SessionAgent extends DurableObject<Env> {
     if (!run.bootId) return this.start(s);
     const snapshot = await this.codex(s).state(run.ack);
     if (snapshot.bootId !== run.bootId || snapshot.active?.runId !== run.id) {
+      s.interruptedRun = run;
       s.currentRun = null;
       await this.transition(
         s,
@@ -477,28 +535,19 @@ export class SessionAgent extends DurableObject<Env> {
       return;
     }
     if (snapshot.events?.length) {
-      await this.env.DB.batch(
-        snapshot.events.map((e) =>
-          this.env.DB.prepare(
-            'INSERT OR IGNORE INTO task_events(id,task_id,kind,content,created_at) VALUES(?,?,?,?,?)',
-          ).bind(
-            `${run.id}:${e.seq}`,
-            s.sessionId,
-            e.kind,
-            e.content,
-            e.createdAt,
-          ),
-        ),
-      );
+      await this.storeEvents(s, run.id, snapshot);
       run.ack = snapshot.events.at(-1)!.seq;
       await this.save(s);
     }
-    for (const approval of snapshot.approvals || [])
-      await this.codex(s).approve(approval.id, 'accept', run.id);
-    for (const tool of snapshot.tools || [])
-      await this.resolveTool(s, tool);
-    await this.ctx.storage.delete('approvals');
+    // Terminal snapshots may still include tool requests captured just before
+    // completion. Those requests must not cause new external writes.
+    if (['completed', 'cancelled', 'failed'].includes(snapshot.active.status)) {
+      if (snapshot.events.length === 50) return;
+      await this.finish(s, snapshot.active);
+      return;
+    }
     if (snapshot.active.status === 'needs_attention') {
+      s.interruptedRun = run;
       s.currentRun = null;
       await this.transition(
         s,
@@ -507,15 +556,11 @@ export class SessionAgent extends DurableObject<Env> {
       );
       return;
     }
-    if (['completed', 'cancelled', 'failed'].includes(snapshot.active.status)) {
-      if (snapshot.events.length === 50) return;
-      await this.finish(s, snapshot.active);
-      return;
-    }
     if (run.stoppingAt || Date.now() - run.startedAt > 20 * 60 * 1000) {
       run.stoppingAt ||= Date.now();
       await this.save(s);
       if (Date.now() - run.stoppingAt > 30000) {
+        s.interruptedRun = run;
         s.currentRun = null;
         await this.transition(
           s,
@@ -525,6 +570,11 @@ export class SessionAgent extends DurableObject<Env> {
       } else await this.codex(s).cancel(run.id);
       return;
     }
+    for (const approval of snapshot.approvals || [])
+      await this.codex(s).approve(approval.id, 'accept', run.id);
+    for (const tool of snapshot.tools || [])
+      await this.resolveTool(s, tool);
+    await this.ctx.storage.delete('approvals');
     if (Date.now() - (run.lastAuthSavedAt || 0) > 60000) {
       const { credentials } = await this.codex(s).credentials();
       if (credentials)
@@ -630,7 +680,6 @@ export class SessionAgent extends DurableObject<Env> {
     const checkpointKey = await this.checkpoint(s, box);
     s.codexThreadId = result.threadId;
     s.consumedMessages = run.inputCount;
-    s.currentRun = null;
     await this.env.DB.prepare(
       'UPDATE tasks SET thread_id=?,checkpoint_key=?,checkpoint_message_count=? WHERE id=? AND owner_id=?',
     )
@@ -651,6 +700,9 @@ export class SessionAgent extends DurableObject<Env> {
           ? '轮次已停止，代码改动与 Codex 会话已保存。'
           : `轮次失败，代码改动已保存：${result.error || '请查看任务记录。'}`,
     );
+    s.currentRun = null;
+    s.interruptedRun = null;
+    await this.save(s);
     await this.ctx.storage.delete('approvals');
     await this.ctx.storage.deleteAlarm();
   }

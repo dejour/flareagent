@@ -22,4 +22,5 @@ jobs:
       - run: npm run test:auth
       - run: npm run test:crypto
       - run: npm run test:github
+      - run: npm run test:runtime
       - run: npm run build

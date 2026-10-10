@@ -114,6 +114,14 @@ async function startEngine() {
       const p = message.params || {};
       if (message.id !== undefined && message.method) {
         if (active && message.method === 'item/tool/call') {
+          if ((p.threadId && p.threadId !== active.threadId) ||
+              !['running', 'waiting_approval'].includes(active.status)) {
+            engine.stdin.write(JSON.stringify({ id: message.id, result: {
+              contentItems: [{ type: 'inputText', text: 'This turn is no longer active.' }],
+              success: false,
+            } }) + '\n');
+            return;
+          }
           tools.set(String(message.id), {
             id: String(message.id),
             rpcId: message.id,
@@ -176,6 +184,7 @@ async function startEngine() {
           );
       }
       if (message.method === 'turn/completed') {
+        if (active.turnId && p.turn.id !== active.turnId) return;
         const status = p.turn.status;
         active.status =
           status === 'completed'
@@ -185,6 +194,7 @@ async function startEngine() {
               : 'failed';
         active.error = p.turn.error?.message || null;
         approvals.clear();
+        tools.clear();
       }
     });
     await rpc('initialize', {
@@ -198,15 +208,25 @@ async function startEngine() {
   return ready;
 }
 async function stopEngine() {
-  if (!engine || engine.exitCode !== null) {
+  if (!engine || !engine.pid || engine.exitCode !== null || engine.signalCode !== null) {
     ready = null;
     return;
   }
   const child = engine;
   await new Promise((resolve) => {
-    child.once('exit', resolve);
-    child.kill('SIGTERM');
-    const timer = setTimeout(() => child.kill('SIGKILL'), 3000);
+    let timer;
+    const done = () => {
+      clearTimeout(timer);
+      child.off('exit', done);
+      child.off('error', done);
+      resolve();
+    };
+    child.once('exit', done);
+    child.once('error', done);
+    if (!child.kill('SIGTERM')) return done();
+    timer = setTimeout(() => {
+      if (!child.kill('SIGKILL')) done();
+    }, 3000);
     timer.unref();
   });
   ready = null;
@@ -344,7 +364,7 @@ async function completeDeviceLogin(current) {
   }
 }
 async function handle(url, body) {
-  if (url.pathname === '/health') return { bootId, version: '0.154.0' };
+  if (url.pathname === '/health') return { bootId, version: '0.3.1' };
   if (url.pathname === '/credentials' && body.clear) {
     await fs.rm(path.join(codexHome, 'auth.json'), { force: true });
     return { ok: true };
@@ -484,6 +504,10 @@ async function handle(url, body) {
   }
   if (url.pathname === '/tool-result') {
     if (active?.runId !== body.runId) throw new Error('Execution changed');
+    // A tool can finish after the model has ended its turn. Never resurrect
+    // that turn or write a reply to a request the engine no longer awaits.
+    if (!['running', 'waiting_approval', 'cancelling'].includes(active.status))
+      return { ok: true };
     const tool = tools.get(body.id);
     if (tool) {
       engine.stdin.write(
@@ -496,7 +520,8 @@ async function handle(url, body) {
         }) + '\n',
       );
       tools.delete(body.id);
-      active.status = approvals.size ? 'waiting_approval' : 'running';
+      if (active.status !== 'cancelling')
+        active.status = approvals.size ? 'waiting_approval' : 'running';
       emit('tool', `${tool.tool}: ${body.text}`);
     }
     return { ok: true };
@@ -522,6 +547,7 @@ async function handle(url, body) {
   }
   if (url.pathname === '/approve') {
     if (active?.runId !== body.runId) throw new Error('Execution changed');
+    if (!['running', 'waiting_approval'].includes(active.status)) return { ok: true };
     const a = approvals.get(body.id);
     if (!a) throw new Error('审批已失效');
     if (!['accept', 'decline'].includes(body.decision))
@@ -551,6 +577,22 @@ async function handle(url, body) {
       const p = spawn('pkill', ['-KILL', '-u', '1000']);
       p.on('exit', resolve);
     });
+    return { active };
+  }
+  if (url.pathname === '/retire') {
+    if (!active || active.runId !== body.runId)
+      throw new Error('Execution changed');
+    await stopEngine();
+    await new Promise((resolve) => {
+      const p = spawn('pkill', ['-KILL', '-u', '1000']);
+      p.on('exit', resolve);
+    });
+    if (!['completed', 'cancelled', 'failed'].includes(active.status)) {
+      active.status = 'cancelled';
+      active.error = '上一轮已中断；已停止执行进程并保留工作区。';
+    }
+    approvals.clear();
+    tools.clear();
     return { active };
   }
   if (url.pathname === '/checkpoint') {
